@@ -6,15 +6,13 @@ from telegram import (
     ReplyKeyboardRemove,
     KeyboardButton,
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    LabeledPrice
+    InlineKeyboardMarkup
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    PreCheckoutQueryHandler,
     ContextTypes,
     ConversationHandler,
     filters
@@ -22,14 +20,12 @@ from telegram.ext import (
 
 # ===================== CONFIG =====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-# Using the token from your previous message
-PAYMENT_PROVIDER_TOKEN = os.environ.get("PAYMENT_PROVIDER_TOKEN", "6141645565:TEST:9DVSJVI3GuF2TlPiY8AT") 
 ADMIN_ID_STR = os.environ.get("ADMIN_CHAT_ID")
 ADMIN_CHAT_ID = int(ADMIN_ID_STR) if ADMIN_ID_STR else 0
 PRIVATE_CHANNEL_ID = -1003664993732
 
 # ===================== STATES =====================
-CHOOSING_LANGUAGE, AWAITING_NAME, AWAITING_PHONE, PENDING_PAYMENT = range(4)
+CHOOSING_LANGUAGE, AWAITING_NAME, AWAITING_PHONE, AWAITING_PAYMENT_PROOF, PENDING_APPROVAL = range(5)
 
 # ===================== LOGGING =====================
 logging.basicConfig(
@@ -38,49 +34,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ===================== PAYMENT HANDLERS =====================
+# ===================== ADMIN ACTIONS =====================
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized", show_alert=True)
+        return
 
-async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.pre_checkout_query
-    await query.answer(ok=True)
-
-async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = context.user_data.get("language", "English")
+    await query.answer()
+    data = query.data
+    user_id = int(data.rsplit("_", 1)[-1])
     
-    msg = "✅ Payment Successful!" if "English" in lang else "✅ ክፍያው በተሳካ ሁኔታ ተጠናቅቋል!"
-    await update.message.reply_text(msg)
+    lang = context.user_data.get("language", "English")
 
-    try:
-        invite = await context.bot.create_chat_invite_link(PRIVATE_CHANNEL_ID, member_limit=1)
-        link_msg = (
-            f"🎉 Welcome! Join here:\n{invite.invite_link}"
-            if "English" in lang else f"🎉 እንኳን ደህና መጡ! እዚህ ይቀላቀሉ፦\n{invite.invite_link}"
+    if data.startswith("adm_app"):
+        try:
+            invite = await context.bot.create_chat_invite_link(PRIVATE_CHANNEL_ID, member_limit=1)
+            msg = (
+                f"🎉 Approved!\nJoin here:\n{invite.invite_link}"
+                if "English" in lang else f"🎉 ተፈቅዷል!\nበዚህ ሊንክ ይቀላቀሉ፦\n{invite.invite_link}"
+            )
+            await context.bot.send_message(user_id, msg)
+            await query.edit_message_caption("✅ APPROVED & LINK SENT")
+        except Exception as e:
+            logger.error(f"Link error: {e}")
+            await query.edit_message_caption("✅ APPROVED (But link failed - check bot permissions)")
+
+    elif data.startswith("adm_rej"):
+        msg = (
+            "❌ Rejected. Please try again using /start."
+            if "English" in lang else "❌ ውድቅ ተደርጓል። እባክዎ /start በመጠቀም እንደገና ይሞክሩ።"
         )
-        await update.message.reply_text(link_msg)
-        
-        name = context.user_data.get("name", "Unknown")
-        await context.bot.send_message(
-            ADMIN_CHAT_ID, 
-            f"💰 PAID\nName: {name}\nID: {user_id}"
-        )
-    except Exception as e:
-        logger.error(f"Invite Link Error: {e}")
-        await update.message.reply_text("Error generating link. Contact admin.")
+        await context.bot.send_message(user_id, msg)
+        await query.edit_message_caption("❌ REJECTED")
 
 # ===================== USER FLOW =====================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
     if user_id == ADMIN_CHAT_ID:
-        await update.message.reply_text("👋 Admin Mode.")
+        await update.message.reply_text("👋 Welcome Admin. You will receive payment proofs here.")
         return ConversationHandler.END
 
     await update.message.reply_text(
         "Choose language / ቋንቋ ይምረጡ:",
         reply_markup=ReplyKeyboardMarkup(
             [["English 🇬🇧", "Amharic 🇪🇹"]],
-            one_time_keyboard=True, resize_keyboard=True
+            one_time_keyboard=True,
+            resize_keyboard=True
         )
     )
     return CHOOSING_LANGUAGE
@@ -104,71 +105,94 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.contact:
-        await update.message.reply_text("Please use the 'Share Phone' button!")
+        await update.message.reply_text("Please use the button!")
         return AWAITING_PHONE
 
     context.user_data["phone"] = update.message.contact.phone_number
     lang = context.user_data.get("language", "English")
-    
-    logger.info(f"Generating invoice for user {update.effective_user.id}")
 
-    # --- INVOICE DETAILS ---
-    title = "Channel Access" if "English" in lang else "የቻናል መግቢያ"
-    description = "Payment for Private Channel" if "English" in lang else "የግል ቻናል መግቢያ ክፍያ"
-    payload = f"user_{update.effective_user.id}_subscription"
-    currency = "ETB"
-    price = 300 * 100  # 300.00 ETB
-    prices = [LabeledPrice(title, price)]
-
-    try:
-        await context.bot.send_invoice(
-            chat_id=update.effective_chat.id,
-            title=title,
-            description=description,
-            payload=payload,
-            provider_token=PAYMENT_PROVIDER_TOKEN,
-            currency=currency,
-            prices=prices,
-            start_parameter="pay-for-access",
-            # CRITICAL ADDITIONS FOR CHAPA:
-            need_name=True,
-            need_phone_number=True,
-            send_phone_number_to_provider=True,
-            is_flexible=False, # Set to False unless you have shipping options
-            reply_markup=ReplyKeyboardRemove()
+    # Integrated Payment Message
+    if "English" in lang:
+        payment_msg = (
+            "💳 **Payment Details**\n"
+            "Please deposit **300 Birr** using the options below. "
+            "When finished, send a photo of the receipt 📸:\n\n"
+            "CBE: `1000597069198` (Gaps International)\n"
+            "Telebirr: `+251911691984` (Netsanet Fikre)"
         )
-        return PENDING_PAYMENT
-    except Exception as e:
-        logger.error(f"DETAILED INVOICE ERROR: {e}")
-        error_msg = "Payment system error. Check your BotFather settings."
-        await update.message.reply_text(error_msg)
-        return ConversationHandler.END
+    else:
+        payment_msg = (
+            "💳 **የክፍያ ዝርዝር**\n"
+            "እባክዎ **300 ብር** ከታች በተጠቀሱት አማራጮች ያስገቡ። "
+            "ሲጨርሱ የደረሰኝ ፎቶ ይላኩ 📸፦\n\n"
+            "ንግድ ባንክ (CBE)፦ `1000597069198` (Gaps International)\n"
+            "ቴሌ ብር፦ `+251911691984` (Netsanet Fikre)"
+        )
+
+    await update.message.reply_text(payment_msg, parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
+    return AWAITING_PAYMENT_PROOF
+
+async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        await update.message.reply_text("📸 Please send a photo!")
+        return AWAITING_PAYMENT_PROOF
+
+    user_id = update.effective_user.id
+    name = context.user_data.get("name", "Unknown")
+    phone = context.user_data.get("phone", "Unknown")
+    
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approve", callback_data=f"adm_app_{user_id}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"adm_rej_{user_id}")
+    ]])
+    
+    # Send to Admin
+    await context.bot.send_photo(
+        ADMIN_CHAT_ID, 
+        photo=update.message.photo[-1].file_id, 
+        caption=f"🔔 NEW PAYMENT\nName: {name}\nPhone: {phone}\nID: {user_id}", 
+        reply_markup=keyboard
+    )
+    
+    lang = context.user_data.get("language", "English")
+    msg = "👍 Submitted! Please wait for admin approval." if "English" in lang else "👍 ገብቷል! እባክዎ የአስተዳዳሪውን ማረጋገጫ ይጠብቁ።"
+    await update.message.reply_text(msg)
+    return PENDING_APPROVAL
+
+async def pending_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = context.user_data.get("language", "English")
+    msg = "⏳ Still under review..." if "English" in lang else "⏳ ገና እየተረጋገጠ ነው።"
+    await update.message.reply_text(msg)
+    return PENDING_APPROVAL
 
 # ===================== MAIN =====================
 def main():
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN not found.")
+        return
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Handlers
-    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^adm_"))
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             CHOOSING_LANGUAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_language)],
             AWAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
-            # CHANGED: Explicitly handle contact and text separately
-            AWAITING_PHONE: [
-                MessageHandler(filters.CONTACT, receive_phone),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_phone)
-            ],
-            PENDING_PAYMENT: [MessageHandler(filters.ALL, lambda u, c: None)]
+            AWAITING_PHONE: [MessageHandler(filters.ALL & ~filters.COMMAND, receive_phone)],
+            AWAITING_PAYMENT_PROOF: [MessageHandler(filters.PHOTO, receive_payment_proof)],
+            PENDING_APPROVAL: [MessageHandler(filters.ALL & ~filters.COMMAND, pending_approval)]
         },
         fallbacks=[CommandHandler("start", start)]
     )
     
     app.add_handler(conv)
+    
+    print("Bot started...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
+
