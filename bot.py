@@ -155,7 +155,8 @@ def main():
         print("Error: BOT_TOKEN not found.")
         return
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).job_queue(None).build()
+    app.add_error_handler(error_handler)
     
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^adm_"))
 
@@ -168,13 +169,11 @@ def main():
             AWAITING_PAYMENT_PROOF: [MessageHandler(filters.PHOTO, receive_payment_proof)],
             PENDING_APPROVAL: [MessageHandler(filters.ALL & ~filters.COMMAND, pending_approval)]
         },
-        fallbacks=[CommandHandler("start", start)]
+        fallbacks=[CommandHandler("start", start)],
+        # ADD THIS LINE BELOW:
+        allow_reentry=True 
     )
     
     app.add_handler(conv)
-    
-    print("Bot started without database...")
     app.run_polling()
 
-if __name__ == "__main__":
-    main()
