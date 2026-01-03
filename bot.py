@@ -103,7 +103,6 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return AWAITING_PHONE
 
 async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # CRITICAL: If the user didn't use the button, ask again
     if not update.message.contact:
         await update.message.reply_text("Please use the 'Share Phone' button!")
         return AWAITING_PHONE
@@ -111,28 +110,34 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["phone"] = update.message.contact.phone_number
     lang = context.user_data.get("language", "English")
     
-    logger.info(f"Phone received for {update.effective_user.id}. Sending invoice...")
+    logger.info(f"Generating invoice for user {update.effective_user.id}")
 
-    # --- SEND AUTOMATED INVOICE ---
+    # --- INVOICE DETAILS ---
     title = "Channel Access" if "English" in lang else "የቻናል መግቢያ"
     description = "Payment for Private Channel" if "English" in lang else "የግል ቻናል መግቢያ ክፍያ"
-    payload = f"payload_{update.effective_user.id}"
+    payload = f"user_{update.effective_user.id}"
     currency = "ETB"
-    price = 300 * 100 
-    prices = [LabeledPrice("Subscription", price)]
+    price = 300 * 100  # 300 ETB
+    prices = [LabeledPrice(title, price)]
 
     try:
         await context.bot.send_invoice(
-            update.effective_chat.id,
-            title, description, payload,
-            PAYMENT_PROVIDER_TOKEN,
-            currency, prices,
-            reply_markup=ReplyKeyboardRemove() # Removes the phone button
+            chat_id=update.effective_chat.id,
+            title=title,
+            description=description,
+            payload=payload,
+            provider_token=PAYMENT_PROVIDER_TOKEN,
+            currency=currency,
+            prices=prices,
+            start_parameter="pay-for-channel", # Added this
+            reply_markup=ReplyKeyboardRemove()
         )
         return PENDING_PAYMENT
     except Exception as e:
-        logger.error(f"Invoice Error: {e}")
-        await update.message.reply_text("Payment system error. Please try again later.")
+        # This will show you exactly what Telegram is complaining about in Heroku logs
+        logger.error(f"DETAILED INVOICE ERROR: {e}")
+        error_msg = "Payment system error. Check if your Chapa token is valid."
+        await update.message.reply_text(error_msg)
         return ConversationHandler.END
 
 # ===================== MAIN =====================
