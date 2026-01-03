@@ -115,9 +115,9 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- INVOICE DETAILS ---
     title = "Channel Access" if "English" in lang else "የቻናል መግቢያ"
     description = "Payment for Private Channel" if "English" in lang else "የግል ቻናል መግቢያ ክፍያ"
-    payload = f"user_{update.effective_user.id}"
+    payload = f"user_{update.effective_user.id}_subscription"
     currency = "ETB"
-    price = 300 * 100  # 300 ETB
+    price = 300 * 100  # 300.00 ETB
     prices = [LabeledPrice(title, price)]
 
     try:
@@ -129,14 +129,18 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             provider_token=PAYMENT_PROVIDER_TOKEN,
             currency=currency,
             prices=prices,
-            start_parameter="pay-for-channel", # Added this
+            start_parameter="pay-for-access",
+            # CRITICAL ADDITIONS FOR CHAPA:
+            need_name=True,
+            need_phone_number=True,
+            send_phone_number_to_provider=True,
+            is_flexible=False, # Set to False unless you have shipping options
             reply_markup=ReplyKeyboardRemove()
         )
         return PENDING_PAYMENT
     except Exception as e:
-        # This will show you exactly what Telegram is complaining about in Heroku logs
         logger.error(f"DETAILED INVOICE ERROR: {e}")
-        error_msg = "Payment system error. Check if your Chapa token is valid."
+        error_msg = "Payment system error. Check your BotFather settings."
         await update.message.reply_text(error_msg)
         return ConversationHandler.END
 
