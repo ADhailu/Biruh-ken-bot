@@ -1,4 +1,3 @@
-
 import logging
 import os
 from telegram import (
@@ -44,10 +43,8 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
     data = query.data
-    # Extract user_id from the callback data
     user_id = int(data.rsplit("_", 1)[-1])
     
-    # We retrieve language from context.user_data if still in memory, otherwise default to English
     lang = context.user_data.get("language", "English")
 
     if data.startswith("adm_app"):
@@ -113,8 +110,26 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["phone"] = update.message.contact.phone_number
     lang = context.user_data.get("language", "English")
-    msg = "💳 Send Payment Screenshot 📸" if "English" in lang else "💳 የክፍያ ደረሰኝ ይላኩ 📸"
-    await update.message.reply_text(msg)
+
+    # Integrated Payment Message
+    if "English" in lang:
+        payment_msg = (
+            "💳 **Payment Details**\n"
+            "Please deposit **300 Birr** using the options below. "
+            "When finished, send a photo of the receipt 📸:\n\n"
+            "CBE: `1000597069198` (Gaps International)\n"
+            "Telebirr: `+251911691984` (Netsanet Fikre)"
+        )
+    else:
+        payment_msg = (
+            "💳 **የክፍያ ዝርዝር**\n"
+            "እባክዎ **300 ብር** ከታች በተጠቀሱት አማራጮች ያስገቡ። "
+            "ሲጨርሱ የደረሰኝ ፎቶ ይላኩ 📸፦\n\n"
+            "ንግድ ባንክ (CBE)፦ `1000597069198` (Gaps International)\n"
+            "ቴሌ ብር፦ `+251911691984` (Netsanet Fikre)"
+        )
+
+    await update.message.reply_text(payment_msg, parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
     return AWAITING_PAYMENT_PROOF
 
 async def receive_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,10 +189,8 @@ def main():
     
     app.add_handler(conv)
     
-    print("Bot started without database...")
+    print("Bot started...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-
-#an update
